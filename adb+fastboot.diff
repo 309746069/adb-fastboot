@@ -1,0 +1,370 @@
+diff --git a/adb/Makefile b/adb/Makefile
+new file mode 100644
+index 0000000..529527c
+--- /dev/null
++++ b/adb/Makefile
+@@ -0,0 +1,60 @@
++# This Makefile is very loosely based on https://gist.github.com/splhack/958335
++# It is overall a pretty dirty hack to force the Android sources to build
++# stand-alone. And even with this Makefile, it requires making a small number
++# of changes to the sources so that they compile without the full Android
++# system in place.
++# You should download
++#   git clone https://android.googlesource.com/platform/system/core platform_system_core
++# and place this Makefile into the adb/ directory.
++
++SRCS+=client/main.cpp adb.cpp adb_auth.cpp adb_auth_host.cpp adb_client.cpp
++SRCS+=adb_io.cpp adb_listeners.cpp adb_trace.cpp adb_utils.cpp commandline.cpp
++SRCS+=console.cpp diagnose_usb.cpp fdevent.cpp file_sync_client.cpp
++SRCS+=get_my_path_linux.cpp line_printer.cpp services.cpp shell_service.cpp
++SRCS+=shell_service_protocol.cpp sockets.cpp sysdeps_unix.cpp transport.cpp
++SRCS+=transport_local.cpp transport_usb.cpp usb_linux.cpp
++
++VPATH+= ../libcutils
++CSRCS+=load_file.c socket_inaddr_any_server_unix.c socket_local_client_unix.c
++CSRCS+=socket_local_server_unix.c socket_loopback_client_unix.c
++CSRCS+=socket_loopback_server_unix.c socket_network_client_unix.c
++
++VPATH+=../base
++SRCS+=file.cpp logging.cpp parsenetaddress.cpp stringprintf.cpp strings.cpp
++
++CPPFLAGS+=-DADB_HOST=1
++CPPFLAGS+=-DHAVE_FORKEXEC=1
++CPPFLAGS+=-DHAVE_SYMLINKS
++CPPFLAGS+=-DHAVE_TERMIO_H
++CPPFLAGS+=-D_GNU_SOURCE
++CPPFLAGS+=-D_XOPEN_SOURCE
++CPPFLAGS+=-I.
++CPPFLAGS+=-I../include
++CPPFLAGS+=-I../base/include
++CPPFLAGS+=-DADB_REVISION='"$(shell date +%Y-%m-%d)"'
++CPPFLAGS+=-D_Nonnull=
++CPPFLAGS+=-D_Nullable=
++CXXFLAGS+=-O2 -g -std=gnu++11 -fpermissive
++CFLAGS+=-O2 -g
++LDFLAGS=-s
++LIBS=-lrt -lpthread -lcrypto -lssl -lz -lutil
++
++OBJS=$(SRCS:.cpp=.o) $(CSRCS:.c=.o)
++OBJS=$(patsubst %.cpp,.build/%.o,$(SRCS)) $(patsubst %.c,.build/%.o,$(CSRCS))
++all: adb
++$(OBJS): | .build
++.build:
++	@mkdir -p $@/client
++
++adb: $(OBJS)
++	$(CXX) -o $@ $(LDFLAGS) $(OBJS) $(LIBS)
++
++clean:
++	rm -rf .build
++
++.build/%.o : %.cpp
++	@echo $<
++	@$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
++.build/%.o : %.c
++	@echo $<
++	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+diff --git a/adb/adb.h b/adb/adb.h
+index 59644d4..67af0b2 100644
+--- a/adb/adb.h
++++ b/adb/adb.h
+@@ -232,9 +232,9 @@ ConnectionState connection_state(atransport *t);
+ 
+ extern const char* adb_device_banner;
+ 
+-#if !ADB_HOST
++//#if !ADB_HOST
+ extern int SHELL_EXIT_NOTIFY_FD;
+-#endif // !ADB_HOST
++//#endif // !ADB_HOST
+ 
+ #define CHUNK_SIZE (64*1024)
+ 
+diff --git a/adb/client/main.cpp b/adb/client/main.cpp
+index 27b7109..b11bea5 100644
+--- a/adb/client/main.cpp
++++ b/adb/client/main.cpp
+@@ -39,6 +39,11 @@
+ #include "adb_utils.h"
+ #include "transport.h"
+ 
++extern "C" {
++  int __android_log_security_bswrite() { }
++  int __android_log_print() { }
++}
++
+ #if defined(_WIN32)
+ static BOOL WINAPI ctrlc_handler(DWORD type) {
+     // TODO: Consider trying to kill a starting up adb server (if we're in
+diff --git a/adb/fdevent.cpp b/adb/fdevent.cpp
+index 902548e..3032ea4 100644
+--- a/adb/fdevent.cpp
++++ b/adb/fdevent.cpp
+@@ -37,12 +37,12 @@
+ #include "adb_trace.h"
+ #include "adb_utils.h"
+ 
+-#if !ADB_HOST
++//#if !ADB_HOST
+ // This socket is used when a subproc shell service exists.
+ // It wakes up the fdevent_loop() and cause the correct handling
+ // of the shell's pseudo-tty master. I.e. force close it.
+ int SHELL_EXIT_NOTIFY_FD = -1;
+-#endif // !ADB_HOST
++//#endif // !ADB_HOST
+ 
+ #define FDE_EVENTMASK  0x00ff
+ #define FDE_STATEMASK  0xff00
+diff --git a/adb/shell_service.h b/adb/shell_service.h
+index e3d676a..adfb7e8 100644
+--- a/adb/shell_service.h
++++ b/adb/shell_service.h
+@@ -125,7 +125,7 @@ class ShellProtocol {
+     DISALLOW_COPY_AND_ASSIGN(ShellProtocol);
+ };
+ 
+-#if !ADB_HOST
++//#if !ADB_HOST
+ 
+ enum class SubprocessType {
+     kPty,
+@@ -144,6 +144,6 @@ enum class SubprocessProtocol {
+ int StartSubprocess(const char* name, const char* terminal_type,
+                     SubprocessType type, SubprocessProtocol protocol);
+ 
+-#endif  // !ADB_HOST
++//#endif  // !ADB_HOST
+ 
+ #endif  // SHELL_SERVICE_H_
+diff --git a/adb/sysdeps.h b/adb/sysdeps.h
+index 81d201e..3fa3297 100644
+--- a/adb/sysdeps.h
++++ b/adb/sysdeps.h
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-
++#include <sys/syscall.h>
+ /* this file contains system-dependent definitions used by ADB
+  * they're related to threads, sockets and file descriptors
+  */
+@@ -830,7 +830,8 @@ static __inline__ int adb_is_absolute_host_path(const char* path) {
+ 
+ static __inline__ unsigned long adb_thread_id()
+ {
+-    return (unsigned long)gettid();
++//    return (unsigned long)gettid();
++    return (unsigned long)syscall(__NR_gettid);
+ }
+ 
+ #endif /* !_WIN32 */
+diff --git a/adb/usb_linux.cpp b/adb/usb_linux.cpp
+index 500898a..b3fb9b3 100644
+--- a/adb/usb_linux.cpp
++++ b/adb/usb_linux.cpp
+@@ -46,7 +46,7 @@
+ #include "adb.h"
+ #include "transport.h"
+ 
+-using namespace std::literals;
++//using namespace std::literals;
+ 
+ /* usb scan debugging is waaaay too verbose */
+ #define DBGX(x...)
+@@ -317,7 +317,7 @@ static int usb_bulk_write(usb_handle* h, const void* data, int len) {
+     h->urb_out_busy = true;
+     while (true) {
+         auto now = std::chrono::system_clock::now();
+-        if (h->cv.wait_until(lock, now + 5s) == std::cv_status::timeout || h->dead) {
++        if (h->cv.wait_until(lock, now + std::chrono::seconds(5)) == std::cv_status::timeout || h->dead) {
+             // TODO: call USBDEVFS_DISCARDURB?
+             errno = ETIMEDOUT;
+             return -1;
+diff --git a/base/errors_unix.cpp b/base/errors_unix.cpp
+index 296995e..744a5ee 100644
+--- a/base/errors_unix.cpp
++++ b/base/errors_unix.cpp
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-
++#include <string.h>
+ #include "android-base/errors.h"
+ 
+ #include <errno.h>
+diff --git a/base/file.cpp b/base/file.cpp
+index da1adba..3513e4d 100644
+--- a/base/file.cpp
++++ b/base/file.cpp
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-
++#include <string.h>
+ #include "android-base/file.h"
+ 
+ #include <errno.h>
+diff --git a/base/logging.cpp b/base/logging.cpp
+index 1741871..83bf8d0 100644
+--- a/base/logging.cpp
++++ b/base/logging.cpp
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-
++#include <string.h>
+ #ifdef _WIN32
+ #include <windows.h>
+ #endif
+diff --git a/fastboot/Makefile b/fastboot/Makefile
+new file mode 100644
+index 0000000..a664b70
+--- /dev/null
++++ b/fastboot/Makefile
+@@ -0,0 +1,89 @@
++# This Makefile is very loosely based on https://gist.github.com/splhack/958335
++# It is overall a pretty dirty hack to force the Android sources to build
++# stand-alone. And even with this Makefile, it requires making a small number
++# of changes to the sources so that they compile without the full Android
++# system in place.
++# You should download
++#   git clone https://android.googlesource.com/platform/system/core platform_system_core
++#   git clone https://android.googlesource.com/platform/system/extras platform_system_extras
++#   git clone https://android.googlesource.com/platform/external/f2fs_tools platform_external_f2fs_tools
++# and place this Makefile into the fastboot/ directory.
++
++SRCS+=bootimg_utils.cpp engine.cpp fastboot.cpp make-fs.cpp protocol.cpp
++SRCS+=socket.cpp tcp.cpp udp.cpp usb_linux.cpp util.cpp util_linux.cpp
++
++VPATH+=../base
++SRCS+=errors_unix.cpp file.cpp parsenetaddress.cpp stringprintf.cpp
++SRCS+=strings.cpp
++
++VPATH+= ../libutils
++SRCS+=FileMap.cpp
++
++VPATH+= ../libcutils
++CSRCS+=socket_inaddr_any_server_unix.c socket_network_client_unix.c
++SRCS+=sockets.cpp sockets_unix.cpp
++
++VPATH+=../libziparchive
++SRCS+=zip_archive.cpp zip_archive_stream_entry.cpp zip_writer.cpp
++
++VPATH+=../adb
++SRCS+=diagnose_usb.cpp
++
++VPATH+=../libsparse
++CSRCS+=backed_block.c output_file.c sparse.c sparse_crc32.c sparse_err.c
++CSRCS+=sparse_read.c
++
++VPATH+=../../platform_system_extras/ext4_utils/
++CSRCS+=allocate.c contents.c crc16.c ext4_sb.c ext4_utils.c extent.c indirect.c
++CSRCS+=make_ext4fs.c sha1.c wipe.c
++
++VPATH+=../../platform_system_extras/f2fs_utils/
++CSRCS+=f2fs_dlutils.c f2fs_ioutils.c f2fs_utils.c
++
++CPPFLAGS+=-D_GNU_SOURCE
++CPPFLAGS+=-D_XOPEN_SOURCE
++CPPFLAGS+=-D_USE_F2FS
++CPPFLAGS+=-I.
++CPPFLAGS+=-I../include
++CPPFLAGS+=-I../adb
++CPPFLAGS+=-I../base/include
++CPPFLAGS+=-I../libsparse/include
++CPPFLAGS+=-I../mkbootimg
++CPPFLAGS+=-I../../platform_system_extras/ext4_utils
++CPPFLAGS+=-I../../platform_system_extras/f2fs_utils
++CPPFLAGS+=-I../../platform_external_f2fs_tools/include
++CPPFLAGS+=-I../../platform_external_f2fs_tools/mkfs
++CPPFLAGS+=-D_Nonnull=
++CPPFLAGS+=-D_Nullable=
++CPPFLAGS+=-DFASTBOOT_REVISION='"$(shell date +%Y-%m-%d)"'
++CXXFLAGS+=-O2 -g -std=gnu++11 -fpermissive -Wno-unused-parameter
++CFLAGS+=-O2 -g
++LDFLAGS=-s
++LIBS=-lz -lselinux -ldl
++
++OBJS=$(SRCS:.cpp=.o) $(CSRCS:.c=.o)
++OBJS=$(patsubst %.cpp,.build/%.o,$(SRCS)) $(patsubst %.c,.build/%.o,$(CSRCS))
++all: fastboot
++$(OBJS): | .build
++.build:
++	@mkdir -p $@/client
++
++fastboot: $(OBJS)
++	$(CXX) -o $@ $(LDFLAGS) $(OBJS) $(LIBS)
++	@rm -f make-fs.cpp
++
++make-fs.cpp:
++	@ln -s fs.cpp make-fs.cpp
++
++clean:
++	rm -rf .build make-fs.cpp
++
++.build/%.o : %.cpp
++	@echo $<
++	@$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
++.build/%.o : %.cc
++	@echo $<
++	@$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
++.build/%.o : %.c
++	@echo $<
++	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+diff --git a/fastboot/fastboot.cpp b/fastboot/fastboot.cpp
+index 7e60a72..7d705ac 100644
+--- a/fastboot/fastboot.cpp
++++ b/fastboot/fastboot.cpp
+@@ -108,6 +108,11 @@ static struct {
+     {"vendor.img", "vendor.sig", "vendor", true},
+ };
+ 
++extern "C" {
++  int __android_log_security_bswrite() { }
++  int __android_log_print() { }
++}
++
+ static char* find_item(const char* item, const char* product) {
+     char *dir;
+     const char *fn;
+diff --git a/fastboot/socket.h b/fastboot/socket.h
+index de543db..dcdd171 100644
+--- a/fastboot/socket.h
++++ b/fastboot/socket.h
+@@ -41,7 +41,7 @@
+ 
+ #include <android-base/macros.h>
+ #include <cutils/sockets.h>
+-#include <gtest/gtest_prod.h>
++//#include <gtest/gtest_prod.h>
+ 
+ // Socket interface to be implemented for each platform.
+ class Socket {
+@@ -120,8 +120,8 @@ class Socket {
+             socket_send_buffers_function_ = &socket_send_buffers;
+ 
+   private:
+-    FRIEND_TEST(SocketTest, TestTcpSendBuffers);
+-    FRIEND_TEST(SocketTest, TestUdpSendBuffers);
++//    FRIEND_TEST(SocketTest, TestTcpSendBuffers);
++//    FRIEND_TEST(SocketTest, TestUdpSendBuffers);
+ 
+     DISALLOW_COPY_AND_ASSIGN(Socket);
+ };
+diff --git a/libziparchive/zip_writer.cc b/libziparchive/zip_writer.cc
+index 1ebed30..bac3394 100644
+--- a/libziparchive/zip_writer.cc
++++ b/libziparchive/zip_writer.cc
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-
++#include <string.h>
+ #include "entry_name_utils-inl.h"
+ #include "zip_archive_common.h"
+ #include "ziparchive/zip_writer.h"
