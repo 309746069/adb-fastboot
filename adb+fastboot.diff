@@ -1,9 +1,9 @@
 diff --git a/adb/Makefile b/adb/Makefile
 new file mode 100644
-index 0000000..529527c
+index 0000000..f7ee4b9
 --- /dev/null
 +++ b/adb/Makefile
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,64 @@
 +# This Makefile is very loosely based on https://gist.github.com/splhack/958335
 +# It is overall a pretty dirty hack to force the Android sources to build
 +# stand-alone. And even with this Makefile, it requires making a small number
@@ -28,6 +28,9 @@ index 0000000..529527c
 +VPATH+=../base
 +SRCS+=file.cpp logging.cpp parsenetaddress.cpp stringprintf.cpp strings.cpp
 +
++VPATH+=../libcrypto_utils
++CSRCS+=android_pubkey.c
++
 +CPPFLAGS+=-DADB_HOST=1
 +CPPFLAGS+=-DHAVE_FORKEXEC=1
 +CPPFLAGS+=-DHAVE_SYMLINKS
@@ -37,11 +40,12 @@ index 0000000..529527c
 +CPPFLAGS+=-I.
 +CPPFLAGS+=-I../include
 +CPPFLAGS+=-I../base/include
++CPPFLAGS+=-I../libcrypto_utils/include
 +CPPFLAGS+=-DADB_REVISION='"$(shell date +%Y-%m-%d)"'
 +CPPFLAGS+=-D_Nonnull=
 +CPPFLAGS+=-D_Nullable=
 +CXXFLAGS+=-O2 -g -std=gnu++11 -fpermissive
-+CFLAGS+=-O2 -g
++CFLAGS+=-O2 -g -std=gnu99
 +LDFLAGS=-s
 +LIBS=-lrt -lpthread -lcrypto -lssl -lz -lutil
 +
@@ -65,7 +69,7 @@ index 0000000..529527c
 +	@echo $<
 +	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 diff --git a/adb/adb.h b/adb/adb.h
-index 59644d4..67af0b2 100644
+index ea20800..ef60c60 100644
 --- a/adb/adb.h
 +++ b/adb/adb.h
 @@ -232,9 +232,9 @@ ConnectionState connection_state(atransport *t);
@@ -97,7 +101,7 @@ index 27b7109..b11bea5 100644
  static BOOL WINAPI ctrlc_handler(DWORD type) {
      // TODO: Consider trying to kill a starting up adb server (if we're in
 diff --git a/adb/fdevent.cpp b/adb/fdevent.cpp
-index 902548e..3032ea4 100644
+index 04cd865..6e7c940 100644
 --- a/adb/fdevent.cpp
 +++ b/adb/fdevent.cpp
 @@ -37,12 +37,12 @@
@@ -316,10 +320,10 @@ index 0000000..a664b70
 +	@echo $<
 +	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 diff --git a/fastboot/fastboot.cpp b/fastboot/fastboot.cpp
-index 7e60a72..7d705ac 100644
+index 94efcc3..0c0e008 100644
 --- a/fastboot/fastboot.cpp
 +++ b/fastboot/fastboot.cpp
-@@ -108,6 +108,11 @@ static struct {
+@@ -109,6 +109,11 @@ static struct {
      {"vendor.img", "vendor.sig", "vendor", true},
  };
  
@@ -328,9 +332,9 @@ index 7e60a72..7d705ac 100644
 +  int __android_log_print() { }
 +}
 +
- static char* find_item(const char* item, const char* product) {
-     char *dir;
+ static std::string find_item(const char* item, const char* product) {
      const char *fn;
+     if (!strcmp(item,"boot")) {
 diff --git a/fastboot/socket.h b/fastboot/socket.h
 index de543db..dcdd171 100644
 --- a/fastboot/socket.h
@@ -355,6 +359,23 @@ index de543db..dcdd171 100644
  
      DISALLOW_COPY_AND_ASSIGN(Socket);
  };
+diff --git a/libcrypto_utils/android_pubkey.c b/libcrypto_utils/android_pubkey.c
+index 3052e52..0263e39 100644
+--- a/libcrypto_utils/android_pubkey.c
++++ b/libcrypto_utils/android_pubkey.c
+@@ -111,7 +111,11 @@ cleanup:
+ }
+ 
+ static bool android_pubkey_encode_bignum(const BIGNUM* num, uint8_t* buffer) {
+-  if (!BN_bn2bin_padded(buffer, ANDROID_PUBKEY_MODULUS_SIZE, num)) {
++  if (ANDROID_PUBKEY_MODULUS_SIZE < BN_num_bytes(num)) {
++    return false;
++  }
++  memset(buffer, 0, ANDROID_PUBKEY_MODULUS_SIZE);
++  if (!BN_bn2bin(num, buffer+(ANDROID_PUBKEY_MODULUS_SIZE-BN_num_bytes(num)))) {
+     return false;
+   }
+ 
 diff --git a/libziparchive/zip_writer.cc b/libziparchive/zip_writer.cc
 index 1ebed30..bac3394 100644
 --- a/libziparchive/zip_writer.cc
